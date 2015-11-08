@@ -1,12 +1,12 @@
 # $Id$
 # Authority: cmr
-# Upstream: The icinga devel team <icinga-devel at lists.sourceforge.net>
+# Upstream: The icinga devel team <icinga-devel at lists.icinga.org>
 #
 # Needs libdbi
 #
 # ExclusiveDist: el5 el6
 
-%define revision 1
+%define revision 0
 
 %define logmsg logger -t %{name}/rpm
 
@@ -14,30 +14,80 @@
 %define spooldir %{_localstatedir}/spool/%{name}
 %define plugindir %{_libdir}/nagios/plugins
 
-%define apacheconfdir  %{_sysconfdir}/httpd/conf.d
+%if "%{_vendor}" == "suse"
+%define apacheuser wwwrun
+%define apachegroup www
+%define apachename apache2
+%define apacheconfdir  %{_sysconfdir}/%{apachename}/conf.d
+%define extcmdfile %{_localstatedir}/icinga/rw/icinga.cmd
+%define extcmdfiledir %{_localstatedir}/icinga/rw
+%define readme README.SUSE
+%define readmeido README.SUSE.idoutils
+%endif
+%if "%{_vendor}" == "redhat"
+%define apachename httpd
+%define apacheconfdir %{_sysconfdir}/%{apachename}/conf.d
 %define apacheuser apache
 %define apachegroup apache
+%define extcmdfile %{_localstatedir}/spool/icinga/cmd/icinga.cmd
+%define extcmdfiledir %{_localstatedir}/spool/icinga/cmd
+%define readme README.RHEL
+%define readmeido README.RHEL.idoutils
+%endif
+
+# Systemd support for Fedora >= 15
+%if 0%{?fedora} >= 15
+%define using_systemd 1
+%else
+%define using_sysvinit 1
+%endif
+
+# Check to see if we're allowed to use macroized systemd scriptlets, as
+# introduced in Fedora 18.
+%if 0%{?using_systemd}
+%if 0%{?fedora} >= 18
+%define systemd_macro_scriptlet 1
+%else
+%define systemd_macro_scriptlet 0
+%endif  # Fedora >= 18
+%endif  # using_systemd
 
 Summary: Open Source host, service and network monitoring program
 Name: icinga
-Version: 1.9.3
+Version: 1.12.2
 Release: %{revision}%{?dist}
 License: GPLv2
 Group: Applications/System
 URL: http://www.icinga.org/
 
-Source0: http://downloads.sourceforge.net/project/%{name}/%{name}/%{version}/%{name}-%{version}.tar.gz
+Source0: https://github.com/Icinga/icinga-core/releases/download/v%{version}/icinga-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+
+%if "%{_vendor}" == "redhat"
+Requires(pre): shadow-utils
+%endif
+
+%if 0%{?using_systemd}
+Requires(post): systemd-units
+Requires(preun): systemd-units
+Requires(postun): systemd-units
+%endif
 
 BuildRequires: gcc
 BuildRequires: gd-devel > 1.8
-BuildRequires: httpd
 BuildRequires: zlib-devel
 BuildRequires: libpng-devel
 BuildRequires: libjpeg-devel
 BuildRequires: libdbi-devel
 BuildRequires: perl(ExtUtils::Embed)
+BuildRequires: make
 ### Requires: nagios-plugins
+BuildRequires: %{apachename}
+%if "%{_vendor}" == "suse"
+BuildRequires: libopenssl-devel
+%endif
+
+
 
 %description
 Icinga is an application, system and network monitoring application.
@@ -53,19 +103,31 @@ which return the status of the checks to Icinga.
 Icinga is a fork of the nagios project.
 
 %package gui
-Summary: Web content for %{name}
+Summary: Classic UI for %{name}
 Group: Applications/System
-Requires: %{name} = %{version}-%{release}
-Requires: httpd
-Requires: %{name}-doc
+Requires: %{apachename}
+Requires: %{name}-doc = %{version}-%{release}
+Requires: %{name}-classicui-config = %{version}-%{release}
 
 %description gui
-This package contains the webgui (html,css,cgi etc.) for %{name}
+This package contains the Classic UI for %{name}. Requires %{name}-doc
+for the documentation module.
+
+%package gui-config
+Summary: Classic UI configuration for %{name}
+Group: Applications/System
+Requires: %{apachename}
+Provides: %{name}-classicui-config
+Conflicts: icinga2-classicui-config
+
+%description gui-config
+This packages contains the classic ui configuration for %{name}.
+
 
 %package devel
 Summary: Provides include files that Icinga-related applications may compile against
 Group: Development/Libraries
-Requires: %{name} = %{version}
+Requires: %{name} = %{version}-%{release}
 
 %description devel
 This package provides include files that Icinga-related applications
@@ -73,9 +135,9 @@ may compile against.
 
 %package idoutils
 Summary: transitional package, use idoutils-libdbi-* instead
-Group: Applications/System 
+Group: Applications/System
 Requires: %{name} = %{version}-%{release}
-Requires: %{name}-idoutils-libdbi-mysql
+Requires: %{name}-idoutils-libdbi-mysql = %{version}-%{release}
 
 %description idoutils
 Transitional package. Idoutils has been splitted into
@@ -88,7 +150,12 @@ files and nothing depends on it.
 Summary: database broker module for %{name}
 Group: Applications/System
 Requires: %{name} = %{version}-%{release}
+%if 0%{?suse_version} >= 1210
+# opensuse
+Requires: libdbi-drivers-dbd-mysql
+%else
 Requires: libdbi-dbd-mysql
+%endif
 Conflicts: %{name}-idoutils-libdbi-pgsql
 
 %description idoutils-libdbi-mysql
@@ -99,7 +166,12 @@ database storage via libdbi and mysql.
 Summary: database broker module for %{name}
 Group: Applications/System
 Requires: %{name} = %{version}-%{release}
+%if 0%{?suse_version} >= 1210
+# opensuse
+Requires: libdbi-drivers-dbd-pgsql
+%else
 Requires: libdbi-dbd-pgsql
+%endif
 Conflicts: %{name}-idoutils-libdbi-mysql
 
 %description idoutils-libdbi-pgsql
@@ -137,8 +209,6 @@ EOF
     --libdir="%{_libdir}/%{name}" \
     --sbindir="%{_libdir}/%{name}/cgi" \
     --sysconfdir="%{_sysconfdir}/%{name}" \
-    --with-command-user="icinga" \
-    --with-command-group="icingacmd" \
     --with-gd-lib="%{_libdir}" \
     --with-gd-inc="%{_includedir}" \
     --with-htmurl="/icinga" \
@@ -153,7 +223,6 @@ EOF
     --enable-embedded-perl \
     --enable-idoutils \
     --with-httpd-conf=%{apacheconfdir} \
-    --with-init-dir=%{_initrddir} \
     --with-log-dir=%{logdir} \
     --enable-cgi-log \
     --with-cgi-log-dir=%{logdir}/gui \
@@ -161,7 +230,7 @@ EOF
     --with-eventhandler-dir="%{_libdir}/%{name}/eventhandlers" \
     --with-p1-file-dir="%{_libdir}/%{name}" \
     --with-checkresult-dir="%{spooldir}/checkresults" \
-    --with-ext-cmd-file-dir="%{spooldir}/cmd" \
+    --with-ext-cmd-file-dir="%{extcmdfiledir}" \
     --with-http-auth-file="%{_sysconfdir}/%{name}/passwd" \
     --with-icinga-chkfile="%{spooldir}/icinga.chk" \
     --with-ido2db-lockfile="%{_localstatedir}/run/ido2db.pid" \
@@ -174,8 +243,19 @@ EOF
 %install
 %{__rm} -rf %{buildroot}
 %{__mkdir} -p %{buildroot}/%{apacheconfdir}
+
+# Our make install invocation will differ depending on whether or not we're
+# using systemd.
+#   without:  make ... install-init ...
+#   with:     make ... install-systemd ...
+%if 0%{?using_systemd}
+%define init_install systemd
+%else
+%define init_install init
+%endif
+
 %{__make} install-unstripped \
-    install-init \
+    install-%{init_install} \
     install-commandmode \
     install-config \
     install-webconf \
@@ -214,89 +294,131 @@ install -d -m0755 "%{buildroot}%{_localstatedir}/spool/%{name}/perfdata"
 
 %pre
 # Add icinga user
-%{_sbindir}/groupadd icinga 2> /dev/null || :
-%{_sbindir}/groupadd icingacmd 2> /dev/null || :
+%{_sbindir}/groupadd -r icinga 2> /dev/null || :
+%{_sbindir}/groupadd -r icingacmd 2> /dev/null || :
 %{_sbindir}/useradd -c "icinga" -s /sbin/nologin -r -d %{_localstatedir}/spool/%{name} -G icingacmd -g icinga icinga 2> /dev/null || :
 
 
 %post
+
+%if 0%{?using_systemd}
+%if 0%{?systemd_macro_scriptlet}
+%systemd_post icinga.service
+%else
+# manual systemd scriptlet
+if [ $1 -eq 1 ] ; then
+    # Initial installation
+    /bin/systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+%endif
+%else
+# No systemd, just plain old sysvinit
 /sbin/chkconfig --add icinga
+%endif
+
 # restart httpd for auth change
-/sbin/service httpd condrestart > /dev/null 2>&1 || :
-
-# if this is an upgrade, and we found an old retention.dat, copy it to new location before starting icinga
-if [ $1 -eq 2 ]
-then
-# stop icinga
-/sbin/service icinga stop &>/dev/null || :
-# check for retention.dat
-if [ -f /var/icinga/retention.dat ]
-then
-    cp /var/icinga/retention.dat %{spooldir}/retention.dat
-    rm /var/icinga/retention.dat
-fi
-# same for objects.precache
-if [ -f /var/icinga/objects.precache ]
-then
-    cp /var/icinga/objects.precache %{spooldir}/objects.precache
-    rm /var/icinga/objects.precache
-fi
-
-# we must then check all changed config locations (and we enforce that change to icinga.cfg only once)
-# cgi.cfg luckily knows where icinga.cfg is and does not need an update
-# retention.dat, objects.cache, objects.precache, status.dat, cmdfile, pidfile, checkresults
-%{__perl} -pi -e '
-	s|/var/icinga/retention.dat|%{spooldir}/retention.dat|;
-	s|/var/icinga/objects.precache|%{spooldir}/objects.precache|;
-	s|/var/icinga/objects.cache|%{spooldir}/objects.cache|;
-	s|/var/icinga/status.dat|%{spooldir}/status.dat|;
-	s|/var/icinga/rw/icinga.cmd|%{spooldir}/cmd/icinga.cmd|;
-	s|/var/icinga/icinga.pid|/var/run/icinga.pid|;
-	s|/var/icinga/checkresults|%{spooldir}/checkresults|;
-	' /etc/icinga/icinga.cfg
+/sbin/service %{apachename} condrestart > /dev/null 2>&1 || :
 
 # start icinga
 /sbin/service icinga start &>/dev/null || :
-fi
 
 %preun
+
+%if 0%{?using_systemd}
+%if 0%{?systemd_macro_scriptlet}
+%systemd_preun icinga.service
+%else
 if [ $1 -eq 0 ]; then
+    # manual systemd scriptlet
+    # Package removal, not upgrade
+    /bin/systemctl --no-reload disable icinga.service > /dev/null 2>&1 || :
+    /bin/systemctl stop icinga.service > /dev/null 2>&1 || :
+fi
+%endif
+%else
+if [ $1 -eq 0 ]; then
+    # No systemd, just plain old sysvinit
     /sbin/service icinga stop &>/dev/null || :
     /sbin/chkconfig --del icinga
 fi
+%endif
 
 %postun
-/sbin/service httpd condrestart > /dev/null 2>&1 || :
+/sbin/service %{apachename} condrestart > /dev/null 2>&1 || :
 
 %pre gui
 # Add apacheuser in the icingacmd group
+# If the group exists, add the apacheuser in the icingacmd group.
+# It is not neccessary that icinga-cgi is installed on the same system as
+# icinga 1.x and only on systems with icinga installed the icingacmd
+# group exists.
+getent group icingacmd > /dev/null
+
+if [ $? -eq 0 ]; then
+%if "%{_vendor}" == "suse"
+  %{_sbindir}/usermod -G icingacmd %{apacheuser}
+%else
   %{_sbindir}/usermod -a -G icingacmd %{apacheuser}
-
-
-%post idoutils-libdbi-mysql
-/sbin/chkconfig --add ido2db
-
-# delete old bindir/idomod.o if it exists
-if [ -f %{_bindir}/idomod.o ]
-then
-    rm -f %{_bindir}/idomod.o
+%endif
 fi
 
-%logmsg "idoutils-libdbi-mysql installed. don't forget to install/upgrade db schema, check README.RHEL.idoutils"
+%post idoutils-libdbi-mysql
+
+%if 0%{?using_systemd}
+%if 0%{?systemd_macro_scriptlet}
+%systemd_post ido2db.service
+%else
+# manual systemd scriptlet
+if [ $1 -eq 1 ] ; then
+    # Initial installation
+    /bin/systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+%endif
+%else
+# No systemd, just plain old sysvinit
+/sbin/chkconfig --add ido2db
+%endif
+
+%logmsg "idoutils-libdbi-mysql installed. don't forget to install/upgrade db schema, check %{readmeido}"
 
 %preun idoutils-libdbi-mysql
+
+%if 0%{?using_systemd}
+%if 0%{?systemd_macro_scriptlet}
+%systemd_preun ido2db.service
+%else
 if [ $1 -eq 0 ]; then
+    # manual systemd scriptlet
+    # Package removal, not upgrade
+    /bin/systemctl --no-reload disable ido2db.service > /dev/null 2>&1 || :
+    /bin/systemctl stop ido2db.service > /dev/null 2>&1 || :
+fi
+%endif
+%else
+if [ $1 -eq 0 ]; then
+    # No systemd, just plain old sysvinit
     /sbin/service ido2db stop &>/dev/null || :
     /sbin/chkconfig --del ido2db
 fi
+%endif
 
 %post idoutils-libdbi-pgsql
-/sbin/chkconfig --add ido2db
-# delete old bindir/idomod.o if it exists
-if [ -f %{_bindir}/idomod.o ]
-then
-    rm -f %{_bindir}/idomod.o
+
+%if 0%{?using_systemd}
+%if 0%{?systemd_macro_scriptlet}
+%systemd_post ido2db.service
+%else
+# manual systemd scriptlet
+if [ $1 -eq 1 ] ; then
+    # Initial installation
+    /bin/systemctl daemon-reload >/dev/null 2>&1 || :
 fi
+%endif
+%else
+# No systemd, just plain old sysvinit
+/sbin/chkconfig --add ido2db
+%endif
+
 ### change ido2db.cfg to match pgsql config
 # check if this is an upgrade
 if [ $1 -eq 2 ]
@@ -317,14 +439,29 @@ then
 		' %{_sysconfdir}/icinga/ido2db.cfg
 fi
 
-%logmsg "idoutils-libdbi-pgsql installed. don't forget to install/upgrade db schema, check README.RHEL.idoutils"
+%logmsg "idoutils-libdbi-pgsql installed. don't forget to install/upgrade db schema, check %{readmeido}"
 
 
 %preun idoutils-libdbi-pgsql
+
+%if 0%{?using_systemd}
+%if 0%{?systemd_macro_scriptlet}
+%systemd_preun ido2db.service
+%else
 if [ $1 -eq 0 ]; then
+    # manual systemd scriptlet
+    # Package removal, not upgrade
+    /bin/systemctl --no-reload disable ido2db.service > /dev/null 2>&1 || :
+    /bin/systemctl stop ido2db.service > /dev/null 2>&1 || :
+fi
+%endif
+%else
+if [ $1 -eq 0 ]; then
+    # No systemd, just plain old sysvinit
     /sbin/service ido2db stop &>/dev/null || :
     /sbin/chkconfig --del ido2db
 fi
+%endif
 
 
 %clean
@@ -332,8 +469,13 @@ fi
 
 %files
 %defattr(-,root,root,-)
-%doc README LICENSE Changelog UPGRADING README.RHEL
+%doc README LICENSE Changelog UPGRADING %{readme}
+%if 0%{?using_systemd}
+%attr(755,-,-)  %{_unitdir}/icinga.service
+%attr(644,-,-)  %{_sysconfdir}/sysconfig/icinga
+%else
 %attr(755,-,-) %{_initrddir}/icinga
+%endif
 %dir %{_sysconfdir}/%{name}
 %dir %{_sysconfdir}/%{name}/modules
 %config(noreplace) %{_sysconfdir}/%{name}/icinga.cfg
@@ -360,20 +502,16 @@ fi
 %dir %{_localstatedir}/spool/%{name}
 %dir %{_localstatedir}/spool/%{name}/perfdata
 %dir %{_localstatedir}/spool/%{name}/checkresults
-%attr(2755,icinga,icingacmd) %{_localstatedir}/spool/%{name}/cmd
+%attr(2755,icinga,icingacmd) %{extcmdfiledir}
 
 %files doc
 %defattr(-,root,root,-)
-%doc README LICENSE Changelog UPGRADING README.RHEL
+%doc README LICENSE Changelog UPGRADING %{readme}
 %{_datadir}/%{name}/docs
 
 %files gui
 %defattr(-,root,root,-)
-%doc README LICENSE Changelog UPGRADING README.RHEL
-%config(noreplace) %{apacheconfdir}/icinga.conf
-%config(noreplace) %{_sysconfdir}/%{name}/cgi.cfg
-%config(noreplace) %{_sysconfdir}/%{name}/cgiauth.cfg
-%attr(0640,root,apache) %config(noreplace) %{_sysconfdir}/%{name}/passwd
+%doc README LICENSE Changelog UPGRADING %{readme}
 %{_libdir}/%{name}/cgi/avail.cgi
 %{_libdir}/%{name}/cgi/cmd.cgi
 %{_libdir}/%{name}/cgi/config.cgi
@@ -404,6 +542,15 @@ fi
 %attr(664,icinga,icingacmd) %{logdir}/gui/index.htm
 %attr(664,icinga,icingacmd) %{logdir}/gui/.htaccess
 
+%files gui-config
+%defattr(-,root,root,-)
+%doc README LICENSE Changelog UPGRADING %{readme}
+%config(noreplace) %{_sysconfdir}/%{name}/cgi.cfg
+%config(noreplace) %{_sysconfdir}/%{name}/cgiauth.cfg
+%config(noreplace) %{apacheconfdir}/icinga.conf
+%config(noreplace) %attr(0640,root,%{apachegroup}) %{_sysconfdir}/%{name}/passwd
+
+
 %files devel
 %defattr(-,root,root)
 %{_includedir}/%{name}/
@@ -414,8 +561,12 @@ fi
 
 %files idoutils-libdbi-mysql
 %defattr(-,root,root,-)
-%doc README LICENSE Changelog UPGRADING module/idoutils/db README.RHEL README.RHEL.idoutils
+%doc README LICENSE Changelog UPGRADING module/idoutils/db %{readme} %{readmeido}
+%if 0%{?using_systemd}
+%attr(644,-,-)  %{_unitdir}/ido2db.service
+%else
 %attr(755,-,-) %{_initrddir}/ido2db
+%endif
 %attr(660,root,root) %config(noreplace) %{_sysconfdir}/%{name}/ido2db.cfg
 %config(noreplace) %{_sysconfdir}/%{name}/idomod.cfg
 %config(noreplace) %{_sysconfdir}/%{name}/modules/idoutils.cfg
@@ -426,8 +577,12 @@ fi
 
 %files idoutils-libdbi-pgsql
 %defattr(-,root,root,-)
-%doc README LICENSE Changelog UPGRADING module/idoutils/db README.RHEL README.RHEL.idoutils
+%doc README LICENSE Changelog UPGRADING module/idoutils/db %{readme} %{readmeido}
+%if 0%{?using_systemd}
+%attr(644,-,-)  %{_unitdir}/ido2db.service
+%else
 %attr(755,-,-) %{_initrddir}/ido2db
+%endif
 %attr(660,root,root) %config(noreplace) %{_sysconfdir}/%{name}/ido2db.cfg
 %config(noreplace) %{_sysconfdir}/%{name}/idomod.cfg
 %config(noreplace) %{_sysconfdir}/%{name}/modules/idoutils.cfg
@@ -438,231 +593,3 @@ fi
 
 
 %changelog
-* Sun Jul 07 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.9.3-1
-- bump 1.9.3
-
-* Sun Jun 30 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.9.2-1
-- bump 1.9.2
-
-* Wed May 22 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.9.1-1
-- bump 1.9.1
-
-* Tue May 07 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.9.0-1
-- bump 1.9.0
-
-* Tue Mar 05 2013 Rene Koch <r.koch@ovido.at> - 1.8.4-5
-- fixed double logdir/gui/ definitions in icinga and icinga-gui
-
-* Fri Feb 15 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.8.4-4
-- fix rpmlint errors/warnings
-
-* Wed Feb 06 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.8.4-3
-- add idoutils as transitional package (thx Stefan Marx, Michael Grüner)
-
-* Fri Feb 01 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.8.4-2
-- fix sf.net url
-
-* Sun Jan 13 2013 Michael Friedrich <michael.friedrich@netways.de> - 1.8.4-1
-- 1.8.4 bump
-
-* Wed Dec 12 2012 Michael Friedrich <michael.friedrich@netways.de> - 1.8.3-1
-- 1.8.3 bump
-
-* Tue Oct 30 2012 Michael Friedrich <michael.friedrich@gmail.com> - 1.8.2-1
-- 1.8.2 bump
-
-* Thu Oct 25 2012 Michael Friedrich <michael.friedrich@gmail.com> - 1.8.1-1
-- 1.8.1 release with a quickfix for faulty macros
-
-* Thu Oct 18 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.8.0-1
-- bump version
-- add devel package, installing header files to include/
-- use --with-mainurl from upstream to set the default to /icinga/cgi-bin/status.cgi?host=all&type=detail&servicestatustypes=29
-- forgot to check on old icinga.cfg entries not matching - enforce that once
-- change permissions on ido2db.cfg, not being world readable (Aaron Russo) #2987
-- drop unsupported configure options causing warnings #3037
-- fix new jquery-ui files from icinga-gui datetime picker #3009
-
-* Thu Aug 30 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.7.2-2
-- include a fix for epn failure from upstream
-
-* Tue Aug 21 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.7.2-1
-- bump version
-
-* Mon Jun 18 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.7.1-1
-- bump to 1.7.1
-
-* Sun May 06 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.7.0-1
-- drop idoutils, add idoutils-libdbi-mysql and idoutils-libdbi-pgsql
-- add requires for libdbi drivers mysql and pgsql
-- add conflicts vice versa to mysql and pgsql libdbi package
-- sed ido2db.cfg for idoutils-libdbi-pgsql to match pgsql config on upgrade
-- log info message for idoutils to create db
-- use the _sbindir macro instead of hardcoded /usr/sbin
-- move pid file to _localstatedir/run/icinga.pid
-- use name macro instead of hardcoded "icinga" everywhere
-- introduce plugindir macro for global usage
-- install icinga.logrotate example
-- move ext cmd file location to _localstatedir/spool/icinga/cmd/icinga.cmd
-- set icinga user's home to _localstatedir/spool/icinga
-- move checkresults to _localstatedir/spool/icinga/checkresults
-- use --with-http-auth-file from #2533
-- add default /etc/icinga/passwd with icingaadmin:icingaadmin default login
-- use ido2db.lock, ido.sock, idomod.tmp, icinga.chk location change from configure params #1856
-- use --with-state-dir=$spooldir for status.dat, objects.cache etc
-- kick provides: nagios again, as this will cause dependency problems. addons must be fixed.
-- copy old retention.dat and objects.precache if found #2585
-- add most valuable changes to README.RHEL*
-- delete old bindir/idomod.o if found
-
-* Sat Feb 25 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.6.1-5
-- add README.RHEL README.RHEL.idoutils to docs, thx Michael Gruener, Stefan Marx #2212
-- use newly introduced --with-eventhandler-dir and make install-eventhandlers
-- install sample eventhandlers to {_libdir}/icinga/eventhandlers
-- use --enable-cgi-log from upstream instead of manual sed
-- add {_sysconfdir}/icinga/conf.d because upstream will include that with cfg_dir
-
-* Fri Feb 24 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.6.1-4
-- rename idomod.o to idomod.so - see #2354
-- use --libdir={_libdir}/icinga to install idomod.so instead of {_bindir} - see #2346
-- list {_libdir}/icinga/cgi/ cgis one by one, removing build warnings
-- remove macros in changelog warnings from rpmlint
-- use custom revision macro, don't forget that on spec updates
-- drop webuser/group, was used only by deprecated icinga-api (thx Michael Gruener) #2356
-- change ownership of docs to root (thx Michael Gruener)
-- add "README LICENSE Changelog UPGRADING" to all packages as docs (thx Michael Gruener) #2212
-- change permissions of resource.cfg to icinga:icinga 640 (thx Michael Gruener)
-- users who use cgi.cfg authorized_for_full_command_resolution must add apache user to group themselves (security risk)
-- put module/idoutils/db into docs instead of manually copying to /etc/icinga/idoutils (thx Michael Gruener) #2357
-- revamp the file permissions based on proposals by Michael Gruener <michael.gruener@topalis.com>
-
-* Thu Feb 23 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.6.1-3
-- use --with-plugin-dir instead of --libexexdir for nagios plugins dir introduced in #2344
-
-* Wed Feb 22 2012 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.6.1-2
-- re-add provides nagios for compatibility reasons
-
-* Fri Dec 02 2011 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.6.1-1
-- bump to 1.6.1
-
-* Sun Nov 27 2011 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.6.0-1
-- set to 1.6.0 target
-- add --with-web-user/group
-- add objects/ido2db_check_proc.cfg
-- drop api package as this is now deprecated and not shipped anymore with icinga package
-- remove provides nagios, inaccurate
-- enable cmd.cgi logging by default, {logdir}/gui used
-- fix --libexecdir to point to possible location of nagios-plugins in resource.cfg:$USER1$
-
-* Fri Sep 09 2011 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.5.1-1
-- bump to 1.5.1
-
-* Wed Jun 29 2011 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.5.0-1
-- set to 1.5.0 target, remove provides nagios version, set idoutils.cfg-sample
-- move all logging to one location https://bugzilla.redhat.com/show_bug.cgi?id=693608
-- add log-dir, cgi-log-dir, phpapi-log-dir to configure, remove the manual creation
-- remove manual logdir creation and movings, as no longer needed
-- add objects/notifications.cfg for further examples
-- fix file perms and locations of cfgs
-- fix group for doc
-
-* Wed May 11 2011 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.4.0-2
-- undo changes on icinga-cmd group, use icingacmd like before
-
-* Thu Apr 28 2011 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.4.0-1
-- update for release 1.4.0
-- remove perl subst for eventhandler submit_check_result, this is now done by configure
-- remove top.html, doxygen
-- set cgi log permissions to apache user
-- honour modules/ in icinga cfg and modules/idoutils.cfg for neb definitions
-- add /icinga/log for cmd.cgi logging, includes .htaccess
-
-* Tue Mar 31 2011 Christoph Maser <cmaser@gmx.de> - 1.3.1-1
-- update for release 1.3.1
-
-* Tue Feb 15 2011 Christoph Maser <cmaser@gmx.de> - 1.3.0-2
-- move cgis to libdir
-- remove suse suppot (packages available at opensuse build system)
-- add doxygen docs
-
-* Wed Nov 03 2010 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.3.0-1
-- prepared 1.3.0, added log2ido for idoutils install
-
-* Mon Oct 25 2010 Christoph Maser <cmaser@gmx.de> - 1.2.1-1
-- update for release 1.2.1
-- add build dep for httpd
-- set INSTALL_OPTS_WEB=""
-
-* Thu Sep 30 2010 Christoph Maser <cmaser@gmx.de> - 1.2.0-1
-- update for release 1.2.0
-
-* Mon Sep 20 2010 Michael Friedrich <michael.friedrich@univie.ac.at> - 1.0.3-4
-- remove php depency for classic gui
-
-* Wed Sep 01 2010 Christoph Maser <cmaser@gmx.de> - 1.0.3-3
-- Put documentation in a separate package
-
-* Tue Aug 31 2010 Christoph Maser <cmaser@gmx.de> - 1.0.3-2
-- Set icinga-api logdir ownership to apache user 
-- add php dependency for icinga-gui subpackage
-
-* Wed Aug 18 2010 Christoph Maser <cmaser@gmx.de> - 1.0.3-1
-- Update to 1.0.3-1
-
-* Thu Jul 05 2010 Christoph Maser <cmaser@gmx.de> - 1.0.2-2
-- Enable debuginfo
-
-* Thu Jun 24 2010 Christoph Maser <cmaser@gmx.de> - 1.0.2-1
-- Update to 1.0.2-1
-
-* Wed Mar 03 2010 Christoph Maser <cmr@financial.com> - 1.0.1-1
-- Update to 1.0.1-1
-
-* Tue Dec 15 2009 Christoph Maser <cmr@financial.com> - 1.0-1
-- Update to 1.0-1
-
-* Mon Oct 26 2009 Christoph Maser <cmr@financial.com> - 1.0-0.RC1.2
-- Split out icinga-api in sub package
-
-* Mon Oct 26 2009 Christoph Maser <cmr@financial.com> - 1.0-0.RC1.1
-- Update to 1.0-RC1
-- Correct checkconfig --del in idoutils #preun
-
-* Mon Oct 26 2009 Christoph Maser <cmr@financial.com> - 0.8.4-3
-- Use icinga-cmd group and add apache user to that group instead
-  of using apachegroup as icinga command group.
-
-* Wed Oct 07 2009 Christoph Maser <cmr@financial.com> - 0.8.4-2
-- make packages openSUSE compatible
-- add #apachecondir, #apacheuser, #apachegroup depending on vendor
-- configure add --with-httpd-conf=#{apacheconfdir} 
-- configure add --with-init-dir=#{_initrddir}
-
-* Wed Sep 16 2009 Christoph Maser <cmr@financial.com> - 0.8.4-1
-- Update to version 0.8.4.
-
-* Tue Sep 15 2009 Christoph Maser <cmr@financial.com> - 0.8.3-3
-- Apply patch from 
-  https://git.icinga.org/index?p=icinga-core.git;a=commit;h=8b3505883856310472979b152b9960f81cdbaad7
-
-* Tue Sep 15 2009 Christoph Maser <cmr@financial.com> - 0.8.3-2
-- Apply patch from 
-  https://git.icinga.org/index?p=icinga-core.git;a=commit;h=068baf7bfc99a2a5a88b64d06df49d7395008b40
-
-* Wed Sep 09 2009 Christoph Maser <cmr@financial.com> - 0.8.3-1
-- Update to version 0.8.3.
-
-* Thu Aug 27 2009 Christoph Maser <cmr@financial.com> - 0.8.2-3
-- fix dir name ndoutils -> idoutils
-
-* Thu Aug 27 2009 Christoph Maser <cmr@financial.com> - 0.8.2-2
-- fix idututils post script
-- copy database scripts from source to sysconfigdir
-
-* Sat Aug 22 2009 Christoph Maser <cmr@financial.com> - 0.8.2-1
-- Update to release 0.8.2.
-- remove idoutils-init, init-script for ido2db is shipped now 
-
-* Sun Jul 19 2009 Christoph Maser <cmr@financial.com> - 0.8.1-1
-- initial package
-

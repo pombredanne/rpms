@@ -8,7 +8,7 @@
 
 Summary: Send network traffic through virtual tunnels to improve your privacy
 Name: tor
-Version: 0.2.3.25
+Version: 0.2.5.10
 Release: 1%{?dist}
 License: BSD
 Group: Applications/Internet
@@ -24,9 +24,13 @@ BuildRequires: binutils
 BuildRequires: doxygen
 BuildRequires: gcc
 BuildRequires: libevent-devel
+BuildRequires: libnatpmp-devel
 BuildRequires: make
+BuildRequires: miniupnpc-devel
 BuildRequires: openssl-devel
 BuildRequires: zlib-devel
+
+BuildConflicts: libev-devel
 
 %description
 Tor is a network of virtual tunnels that allows people and groups to improve
@@ -46,20 +50,24 @@ that are blocked by their local Internet service providers (ISPs).
 #export CPPFLAGS="-I/usr/include/kerberos"
 export CPPFLAGS="-I/usr/kerberos/include"
 %configure \
+    --disable-dependency-tracking \
     --with-tor-user="%{toruser}" \
     --with-tor-group="%{torgroup}" \
     --enable-gcc-hardening \
-    --enable-geoip-stats \
-    --enable-linker-hardening
+    --enable-linker-hardening \
+    --enable-nat-pmp \
+    --enable-upnp
 %{__make} %{?_smp_mflags}
-%{__perl} -pi -e "s|# chkconfig: 2345|# chkconfig: -|g;" contrib/tor.sh
+%{__perl} -pi -e "s|# chkconfig: 2345|# chkconfig: -|g;" contrib/dist/tor.sh
 
 %install
 %{__rm} -rf %{buildroot}
 %{__make} install DESTDIR="%{buildroot}"
-%{__install} -Dp -m755 contrib/torctl %{buildroot}%{_bindir}/torctl
-%{__install} -Dp -m755 contrib/tor.sh %{buildroot}%{_initrddir}/tor
-%{__install} -Dp -m644 contrib/tor.logrotate %{buildroot}%{_sysconfdir}/logrotate.d/tor
+%{__install} -Dp -m755 contrib/dist/torctl %{buildroot}%{_bindir}/torctl
+%{__install} -Dp -m755 contrib/dist/tor.sh %{buildroot}%{_initrddir}/tor
+%{__install} -Dp -m644 contrib/operator-tools/tor.logrotate %{buildroot}%{_sysconfdir}/logrotate.d/tor
+%{__install} -Dp -m644 contrib/operator-tools/tor-exit-notice.html %{buildroot}%{_sysconfdir}/tor/tor-exit-notice.html
+%{__install} -Dp -m755 contrib/or-tools/exitlist %{buildroot}%{_bindir}/tor-exitlist
 %{__mv} -f %{buildroot}%{_sysconfdir}/tor/torrc.sample %{buildroot}%{_sysconfdir}/tor/torrc
 %{__install} -d %{buildroot}%{_localstatedir}/lib/tor/
 %{__install} -d %{buildroot}%{_localstatedir}/log/tor/
@@ -93,20 +101,23 @@ fi
 %files
 %defattr(-, root, root, 0755)
 %doc ChangeLog INSTALL LICENSE README
-%doc doc/HACKING doc/TODO doc/*.html doc/*.txt
+%doc doc/HACKING doc/*.html doc/*.txt
 %doc %{_mandir}/man?/*
 %config %{_initrddir}/tor
 %config(noreplace) %{_sysconfdir}/logrotate.d/tor
 %{_bindir}/*
 %dir %{_datadir}/tor/
 %{_datadir}/tor/geoip
+%{_datadir}/tor/geoip6
 
 %defattr(-, root, %{torgroup}, 0750)
 %dir %{_sysconfdir}/tor/
 
 %defattr(-, root, %{torgroup}, 0640)
-%config(noreplace) %{_sysconfdir}/tor/tor-tsocks.conf
 %config(noreplace) %{_sysconfdir}/tor/torrc
+
+%defattr(-, root, %{torgroup}, 0644)
+%config(noreplace) %{_sysconfdir}/tor/tor-exit-notice.html
 
 %defattr(-, %{toruser}, %{torgroup}, 0700)
 %dir %{_localstatedir}/lib/tor
@@ -116,6 +127,15 @@ fi
 %dir %{_localstatedir}/log/tor
 
 %changelog
+* Thu Dec 11 2014 Steve Huff <shuff@vecna.org> - 0.2.5.10-1
+- Updated to release 0.2.5.10.
+
+* Mon Dec 22 2013 Steve Huff <shuff@vecna.org> - 0.2.4.19-1
+- Updated to release 0.2.4.19.
+- Added BuildConflicts libev-devel.
+- Modified some configure args (enabling NAT traversal)
+- Added additional BuildRequires to support.
+
 * Mon Dec 17 2012 David Hrbáč <david@hrbac.cz> - 0.2.3.25-1
 - new upstream release
 
